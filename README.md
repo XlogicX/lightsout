@@ -9,3 +9,6 @@ Sometimes instead of yellow, the lights will shine red. If you are in this evil 
 
 # Win Detection
 This game is aware of when you are in a winning state and even does a glitch animation when you win as a reward. After a minute or two, the game will reset and rescramble
+
+# Demo on YouTube
+ https://youtu.be/-5Bk1rv6TL8
