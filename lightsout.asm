@@ -1,12 +1,5 @@
 ;LightsOut
 
-; Corner coordinates for each light
-;0x02aa 0x02b6 0x02c2 0x02ce 0x02da
-;0x052a 0x0536 0x0542 0x054e 0x055a
-;0x07aa 0x07b6 0x07c2 0x07ce 0x07da
-;0x0a2a 0x0a36 0x0a42 0x0a4e 0x0a5a
-;0x0caa 0x0cb6 0x0cc2 0x0cce 0x0cda
-
 [ORG 0x7c00]
 LEFT EQU 75
 RIGHT EQU 77
@@ -34,7 +27,7 @@ rep stosw                 ; push it to video memory
 
 ; Draw Grid Background
 ; each light is 5x3 'pixels' at 5x5 lights. with border, full grid would be 31x21 'pixels'
-mov bx, 21			; 17 rows
+mov bx, 21			; 21 rows
 mov ax, 0x78b2		; initialize border color
 mov di, 520			; initialize top-left corner
 grid:
@@ -51,20 +44,20 @@ clearboard:
 mov byte [board + bx], 0
 inc bx
 loop clearboard
-
+; Initialize 4 lights turned on that are still in a winnable state
 mov word [board + 20], 0x0101
 mov word [board + 23], 0x0101
 
 ; Evil?
-in al,(0x40)              ; Get random
-cmp al, 0x10              ; 1 in 16 chance it will be evil
-ja evildone            ; If above, then not evil
-; Evil (start at unsolvable position)
-mov byte [board], 1
-mov byte [lighton + 2], 0x44
+in al,(0x40)            ; Get random
+cmp al, 0x10            ; 1 in 16 chance it will be evil
+ja evildone            	; If above, then not evil
+; Otherwise: Evil (start at unsolvable position)
+mov byte [board], 1				; Unsolvable modification
+mov byte [lighton + 2], 0x44	; Change lights from yellow to red
 evildone:
 
-; Scramble
+; Scramble (game plays itself randomely for 255 moves)
 mov bp, 0xff              ; Init to 255 rounds of movement
 scramble:
   dec bp
@@ -112,10 +105,10 @@ exit:
   int 0x10
   int 0x20              ; Return to bootOS
 up:
-	sub si, 0x100
-	cmp si, -1
-	jg done
-	add si, 0x100 
+	sub si, 0x100		; move coordinate
+	cmp si, -1			; bounds check
+	jg done				; if good, no mods needed
+	add si, 0x100 		; Otherwise, correct bounds
 	jmp done
 down:
 	add si, 0x100
@@ -140,10 +133,10 @@ right:
 toggle:
 	call flip		;flip cursored light
 
-	sub si, 0x100	; move up a light
-	cmp si, -1		; see if out of bounds
-	jg upflip		; if in bounds
-	jmp updone
+	sub si, 0x100			; move up a light
+	cmp si, -1				; see if out of bounds
+	jg upflip				; if in bounds
+	jmp updone				; otherwise don't flip and correct bounds
 	upflip: call flip
 	updone: add si, 0x100
 
@@ -171,37 +164,33 @@ toggle:
 	rightdone: sub si, 1
 
 done:
-	call drawboard
-	call cursor
-	call wincheck
+	call drawboard		; redraw the board
+	call cursor			; redraw the cursor over the board
+	call wincheck		; check to see if all lights are off
 ret
-
-
-quit: jmp quit
-
 
 ; Routine for setting on/off color
 lightoff:
-push 0
-jmp lighton_b
-lighton:
+push 0				; 0 for off, but default
+jmp lighton_b		; if so, we can draw it
+lighton:			; enter on light on possibly
 push 0xee00			; 'light-on' character
 lighton_b:
-call getcoord
-pop ax
-call drawlight
+call getcoord		; AX has an encoded coord, this gets the di value needed
+pop ax				; get color value off the stack into ax
+call drawlight		; draw the light
 ret
 
 ; Routine that gets the upper left coordinate of a 5x5 light
 getcoord:
-mov di, 0x2aa
-mov cl, ah
+mov di, 0x2aa		; starting corner of first (top left) light
+mov cl, ah			; y coord
 coordloop1:
-add di, 0x280
+add di, 0x280		; for each y, add 0x280
 loop coordloop1
-mov cl, al
+mov cl, al			; x coord
 coordloop2:
-add di, 0xc
+add di, 0xc			; for each x, add 12
 loop coordloop2
 ret
 
@@ -216,83 +205,87 @@ dec bx				; next iteration
 jne lightgrid		; repeat if not done
 ret
 
+; Taking the on/off (1 or 0) values of our 25 byte board array and
+; drawing them to screen. It may seem like a waste of data/bytes to
+; store 1/0 flags in each byte, but this memory does not account
+; for any of the 512 byte limit and a decoding routine for packed data
+; WOULD account for using the 512 byte limit.
 drawboard:
-xor ax, ax
-xor bx, bx
+xor ax, ax		; init
+xor bx, bx		; init
 fillboard:
-push ax
+push ax			; safe keeping for ax and bx, they get mangled in some calls
 push bx
-mov cl, byte [board + bx]
-cmp cl, 0
-jne otherlight
-call lightoff
+mov cl, byte [board + bx]	; Get a light value
+cmp cl, 0					; is it off
+jne otherlight				; if its not off (on), go and call 'lighton'
+call lightoff				; otherwise we call 'lightoff'
 jmp nextdraw
 otherlight:
 call lighton
 nextdraw:
-pop bx
+pop bx				; restore our ax, and bx values
 pop ax
-inc ah
-inc bx
-cmp ah, 5
-jne fillboard
-inc al
-cbw
-cmp al, 5
-jne fillboard
+inc ah				; increment our y coordinate
+inc bx				; increment to next light value in data array
+cmp ah, 5			; is it last column?
+jne fillboard		; if not, keep processing
+inc al				; increment our x coordinate
+cbw					; clear ah/(y coord)
+cmp al, 5			; is it the lsat row?
+jne fillboard		; if not, keep going
 ret
 
 cursor:
-mov ax, si
-call getcoord
-add di, 164
-mov ah, 0x88
-stosw
+mov ax, si			; get encoded light coordinate
+call getcoord		; decode it to di value
+add di, 164			; adjust to center of light, not upper left corner
+mov ah, 0x88		; Make color grey
+stosw				; paint it
 ret
 
+; This is a routine for just toggling one light
 flip:
-mov ax, si
-xor bx, bx
-mov cl, al
+mov ax, si			; get encoded coordinate into ax
+xor bx, bx			; init
+mov cl, al			; row into cl
 fliploop:
-add bx, 5
+add bx, 5			; add columns for how many are encoded
 loop fliploop
-add bl, ah
-cmp byte [board + bx], 1
-je flipoff
-mov byte [board + bx], 1
+add bl, ah			; add rows for how many are encoded
+cmp byte [board + bx], 1	; is light on?
+je flipoff					; if so, turn off
+mov byte [board + bx], 1	; turn light on
 ret
 flipoff:
-mov byte [board + bx], 0
+mov byte [board + bx], 0	; turn light off
 ret
 
+; See if all lights are turned off, if so, do 'winning' sequence.
 wincheck:
-xor bx, bx
+xor bx, bx				; init
 winloop:
-mov al, [board + bx]
-cmp al, 1
-je checkdone
-inc bx
-cmp bx, 26
-jl winloop
-mov ch, 0x10
+mov al, [board + bx]	; check light at current coord
+cmp al, 1				; is it on?
+je checkdone			; if it as, we haven't won
+inc bx					; go to next light
+cmp bx, 26				; have we checked all lights?
+jl winloop				; if not, keep processing
+mov ch, 0x10			; otherwise, win screen, 0x10xx iterations
 win:
-in al,(0x40)              ; Get random
-shl ax, 8
-in al,(0x40)
-mov di, ax
-and di, 0x0fff
-;in al,(0x40)              ; Get random
-;shl ax, 8
-;in al,(0x40)
-stosw
-mov bx, [0x046C] ;Get timer state
-add bx, 1 ;2 ticks (can be more)
+in al,(0x40)            ; Get random
+shl ax, 8				; Get into ah
+in al,(0x40)			; Get random again and keep in al (for full ax random)
+mov di, ax				; make it the coordinate (but it's also the character)
+and di, 0x0fff			; mask coordinate so it's likely within screen
+stosw					; print it
+mov bx, [0x046C] 	; Get timer state
+add bx, 1 			; 1 tick
 delay:
 cmp [0x046C], bx
 jb delay
 loop win
-int 0x19
+int 0x19			; Restart the game after it does a visual for a minute or so
 checkdone:
 ret
 
@@ -300,4 +293,5 @@ ret
 times 510-($-$$) db 0
 dw 0xAA55
 
+; Board data, pointed to in a memory area after the executable code image. It consumes 25 bytes of data
 board:
